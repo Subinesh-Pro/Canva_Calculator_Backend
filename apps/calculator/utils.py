@@ -1,45 +1,26 @@
-# import torch
-# from transformers import pipeline, BitsAndBytesConfig, AutoProcessor, LlavaForConditionalGeneration
-# from PIL import Image
-
-# # quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
-# quantization_config = BitsAndBytesConfig(
-#     load_in_4bit=True,
-#     bnb_4bit_compute_dtype=torch.float16
-# )
-
-
-# model_id = "llava-hf/llava-1.5-7b-hf"
-# processor = AutoProcessor.from_pretrained(model_id)
-# model = LlavaForConditionalGeneration.from_pretrained(model_id, quantization_config=quantization_config, device_map="auto")
-# # pipe = pipeline("image-to-text", model=model_id, model_kwargs={"quantization_config": quantization_config})
-
-# def analyze_image(image: Image):
-#     prompt = "USER: <image>\nAnalyze the equation or expression in this image, and return answer in format: {expr: given equation in LaTeX format, result: calculated answer}"
-
-#     inputs = processor(prompt, images=[image], padding=True, return_tensors="pt").to("cuda")
-#     for k, v in inputs.items():
-#         print(k,v.shape)
-
-#     output = model.generate(**inputs, max_new_tokens=20)
-#     generated_text = processor.batch_decode(output, skip_special_tokens=True)
-#     for text in generated_text:
-#         print(text.split("ASSISTANT:")[-1])
-
-import google.generativeai as genai
+import logging
 import ast
 import json
 from PIL import Image
+import google.generativeai as genai
 from constants import GEMINI_API_KEY
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 genai.configure(api_key=GEMINI_API_KEY)
 
 def analyze_image(img: Image, dict_of_vars: dict):
+    logger.debug("Started analyzing image")
+
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
     dict_of_vars_str = json.dumps(dict_of_vars, ensure_ascii=False)
+    
+    # Prepare the prompt for the Gemini API
     prompt = (
         f"You have been given an image with some mathematical expressions, equations, or graphical problems, and you need to solve them. "
-        f"Note: Use the PEMDAS rule for solving mathematical expressions. PEMDAS stands for the Priority Order: Parentheses, Exponents, Multiplication and Division (from left to right), Addition and Subtraction (from left to right). Parentheses have the highest priority, followed by Exponents, then Multiplication and Division, and lastly Addition and Subtraction. "
+        f"Note: Use the PEMDAS rule for solving mathematical expressions. PEMDAS stands for the Priority Order: Parentheses, Exponents, Multiplication and Division (from left to right), Addition and Subtraction (from left to right). "
         f"For example: "
         f"Q. 2 + 3 * 4 "
         f"(3 * 4) => 12, 2 + 12 = 14. "
@@ -58,17 +39,30 @@ def analyze_image(img: Image, dict_of_vars: dict):
         f"DO NOT USE BACKTICKS OR MARKDOWN FORMATTING. "
         f"PROPERLY QUOTE THE KEYS AND VALUES IN THE DICTIONARY FOR EASIER PARSING WITH Python's ast.literal_eval."
     )
-    response = model.generate_content([prompt, img])
-    print(response.text)
-    answers = []
+    
+    # Log the prompt and input data
+    logger.debug(f"Prompt sent to Gemini API: {prompt[:500]}...")  # Only show part of the prompt to avoid logging too much data
+    
     try:
-        answers = ast.literal_eval(response.text)
+        # Send the request to Gemini API
+        response = model.generate_content([prompt, img])
+        logger.debug(f"Response from Gemini API: {response.text[:500]}...")  # Log part of the response for debugging
+        
+        # Parse the response text
+        answers = []
+        try:
+            answers = ast.literal_eval(response.text)
+            logger.debug(f"Parsed answers: {answers}")
+        except Exception as e:
+            logger.error(f"Error parsing response from Gemini API: {e}")
+        
+        # Final adjustments to answers
+        for answer in answers:
+            if 'assign' not in answer:
+                answer['assign'] = False
+            logger.debug(f"Processed answer: {answer}")
+
+        return answers
     except Exception as e:
-        print(f"Error in parsing response from Gemini API: {e}")
-    print('returned answer ', answers)
-    for answer in answers:
-        if 'assign' in answer:
-            answer['assign'] = True
-        else:
-            answer['assign'] = False
-    return answers
+        logger.error(f"Error generating content from Gemini API: {e}")
+        return [{"error": "Failed to process the image", "details": str(e)}]

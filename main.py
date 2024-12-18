@@ -1,16 +1,21 @@
-from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from apps.calculator.route import router as calculator_router
 from constants import SERVER_URL, PORT, ENV
+from contextlib import asynccontextmanager
+
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)  # You can set this to INFO, WARNING, or ERROR for less verbose output
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,13 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.get('/')
 async def root():
+    logger.debug("Root endpoint hit")
     return {"message": "Server is running"}
 
 app.include_router(calculator_router, prefix="/calculate", tags=["calculate"])
 
-
 if __name__ == "__main__":
+    logger.info(f"Starting server on {SERVER_URL}:{PORT}...")
     uvicorn.run("main:app", host=SERVER_URL, port=int(PORT), reload=(ENV == "dev"))
